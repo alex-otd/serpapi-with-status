@@ -150,9 +150,9 @@ Output CSV filename.
 
 ```bash
 python serp_scraper.py \
-  --query "site:westcoastdownsizingsolution.com" \
+  --query "site:example-domain" \
   --pages 10 \
-  --output westcoastdownsize_status.csv
+  --output example-domain_status.csv
 ```
 
 ---
