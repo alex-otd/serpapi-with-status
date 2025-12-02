@@ -1,10 +1,68 @@
 import os
 import sys
 import csv
-import argparse
-import requests
-from serpapi import GoogleSearch
-from dotenv import load_dotenv
+from pathlib import Path
+
+# ==============================================================================
+#  👇 USER CONFIGURATION - EDIT YOUR SEARCH SETTINGS HERE 👇
+# ==============================================================================
+
+SEARCH_QUERY    = "site:onethingdigital.com"    # The query you want to search Google for, you can use commands like site: if you need
+SEARCH_LOCATION = "United States"       # The region for the search results
+NUMBER_OF_PAGES = 1                     # How many pages to fetch (10 results per page)
+OUTPUT_FILENAME = "serp_results.csv"    # The file where results will be saved
+
+# ==============================================================================
+#  👆 END CONFIGURATION 👆
+# ==============================================================================
+
+
+# --- IMPROVED IMPORT SECTION ---
+try:
+    import requests
+    from serpapi import GoogleSearch
+    from dotenv import load_dotenv, find_dotenv
+except ImportError as e:
+    print("\n" + "=" * 60)
+    print("❌ MISSING LIBRARIES DETECTED")
+    print("=" * 60)
+    print(f"Error detail: {e}")
+    print("\nPlease run the following command to install the required libraries:")
+    print("\n    pip install python-dotenv google-search-results requests")
+    print("\n" + "=" * 60 + "\n")
+    sys.exit(1)
+
+# Check Python version
+if sys.version_info < (3, 9):
+    print("=" * 60)
+    print("ERROR: Python 3.9 or newer is required")
+    print("=" * 60)
+    sys.exit(1)
+
+# --- ROBUST .ENV LOADING ---
+script_location = Path(__file__).resolve().parent
+env_file_path = script_location / '.env'
+
+print(f"DEBUG: Looking for .env at: {env_file_path}")
+
+if env_file_path.exists():
+    print("DEBUG: Found .env file. Loading...")
+    load_dotenv(dotenv_path=env_file_path)
+else:
+    print("DEBUG: ❌ .env file NOT found at that path.")
+
+# Check if key is loaded
+if not os.getenv('SERPAPI_API_KEY'):
+    print("\n" + "=" * 60)
+    print("❌ ERROR: SERPAPI_API_KEY not loaded!")
+    print("=" * 60)
+    print(f"We found the file at: {env_file_path}")
+    print("But we couldn't read 'SERPAPI_API_KEY' from it.")
+    print("\nPlease check:")
+    print("1. Did you save the file?")
+    print("2. Does it contain: SERPAPI_API_KEY=your_key_here")
+    print("\n" + "=" * 60 + "\n")
+    sys.exit(1)
 
 STATUS_MEANINGS = {
     200: "OK",
@@ -33,7 +91,6 @@ def assert_csv_writable(filename: str) -> bool:
     try:
         with open(filename, "w", newline="", encoding="utf-8") as f:
             f.write("")
-        print(f"CSV writable: {filename}")
         return True
     except Exception as e:
         print(f"Cannot write to {filename}")
@@ -60,11 +117,8 @@ def check_url_status(url: str, timeout: int = 10):
     except Exception as e:
         return None, f"Error: {e}", url
 
-def fetch_google_results(query: str, location: str = "United States", pages: int = 10):
+def fetch_google_results(query: str, location: str, pages: int):
     api_key = os.getenv("SERPAPI_API_KEY")
-    if not api_key:
-        raise RuntimeError("SERPAPI_API_KEY environment variable not set")
-
     all_results = []
     position = 1
     per_page = 10
@@ -81,14 +135,21 @@ def fetch_google_results(query: str, location: str = "United States", pages: int
             "google_domain": "google.com",
             "num": per_page,
             "start": start,
-            "filter": "0",
             "api_key": api_key,
         }
 
         print(f"Fetching Google page {page + 1}...")
 
-        search = GoogleSearch(params)
-        data = search.get_dict()
+        try:
+            search = GoogleSearch(params)
+            data = search.get_dict()
+        except Exception as e:
+            print(f"Error connecting to SerpAPI: {e}")
+            break
+
+        if "error" in data:
+            print(f"API Error: {data['error']}")
+            break
 
         organic = data.get("organic_results", [])
         if not organic:
@@ -97,6 +158,9 @@ def fetch_google_results(query: str, location: str = "United States", pages: int
 
         for item in organic:
             url = item.get("link")
+            if not url:
+                continue
+                
             code, meaning, resolved_url = check_url_status(url)
 
             all_results.append({
@@ -115,67 +179,38 @@ def fetch_google_results(query: str, location: str = "United States", pages: int
 
 def save_results_to_csv(results, filename: str):
     fieldnames = [
-        "position",
-        "title",
-        "link",
-        "final_url",
-        "http_code",
-        "status",
-        "displayed_link",
-        "snippet",
+        "position", "title", "link", "final_url", 
+        "http_code", "status", "displayed_link", "snippet"
     ]
 
-    with open(filename, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(results)
-
-    print(f"Saved {len(results)} URLs to {filename}")
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Fetch Google results via SerpApi and audit URL status codes."
-    )
-    parser.add_argument(
-        "--query",
-        required=True,
-        help='Google query, e.g. "site:example.com/old-section"',
-    )
-    parser.add_argument(
-        "--location",
-        default="United States",
-        help="Search location (default: United States)",
-    )
-    parser.add_argument(
-        "--pages",
-        type=int,
-        default=10,
-        help="Number of Google result pages to fetch (10 results per page)",
-    )
-    parser.add_argument(
-        "--output",
-        default="serp_results.csv",
-        help="Output CSV filename (default: serp_results.csv)",
-    )
-    return parser.parse_args()
+    try:
+        with open(filename, "w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"Saved {len(results)} URLs to {filename}")
+    except Exception as e:
+        print(f"Error saving CSV: {e}")
 
 def main():
-    # Load .env if present
-    load_dotenv()
-
-    args = parse_args()
-    output_file = args.output
-
-    if not assert_csv_writable(output_file):
+    # Verify we can write to the output file before starting
+    if not assert_csv_writable(OUTPUT_FILENAME):
         sys.exit(1)
 
+    print(f"\n--- Starting Search ---")
+    print(f"Query:    {SEARCH_QUERY}")
+    print(f"Location: {SEARCH_LOCATION}")
+    print(f"Pages:    {NUMBER_OF_PAGES}")
+    print(f"Output:   {OUTPUT_FILENAME}")
+    print("-" * 23 + "\n")
+
     results = fetch_google_results(
-        query=args.query,
-        location=args.location,
-        pages=args.pages,
+        query=SEARCH_QUERY,
+        location=SEARCH_LOCATION,
+        pages=NUMBER_OF_PAGES,
     )
 
-    save_results_to_csv(results, output_file)
+    save_results_to_csv(results, OUTPUT_FILENAME)
 
 if __name__ == "__main__":
     main()
