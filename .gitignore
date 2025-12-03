@@ -24,3 +24,6 @@ Thumbs.db
 ##output
 *.csv
 *.log
+
+##whitelist
+!example.env
